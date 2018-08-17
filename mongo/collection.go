@@ -21,6 +21,7 @@ import (
 	"github.com/mongodb/mongo-go-driver/core/session"
 	"github.com/mongodb/mongo-go-driver/core/writeconcern"
 	"github.com/mongodb/mongo-go-driver/mongo/aggregateopt"
+	"github.com/mongodb/mongo-go-driver/mongo/bulkwriteopt"
 	"github.com/mongodb/mongo-go-driver/mongo/changestreamopt"
 	"github.com/mongodb/mongo-go-driver/mongo/collectionopt"
 	"github.com/mongodb/mongo-go-driver/mongo/countopt"
@@ -134,6 +135,68 @@ func (coll *Collection) Name() string {
 // namespace returns the namespace of the collection.
 func (coll *Collection) namespace() command.Namespace {
 	return command.NewNamespace(coll.db.name, coll.name)
+}
+
+// BulkWrite executes multiple write operations.
+func (coll *Collection) BulkWrite(ctx context.Context, requests []WriteModel, opts ...bulkwriteopt.BulkWrite) (*BulkWriteResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	bulkOpts, sess, err := bulkwriteopt.BundleBulkWrite(opts...).Unbundle()
+	if err != nil {
+		return nil, err
+	}
+
+	err = coll.client.ValidSession(sess)
+	if err != nil {
+		return nil, err
+	}
+
+	wc := coll.writeConcern
+	if sess != nil && (sess.TransactionInProgress() || sess.TransactionStarting()) {
+		wc = nil
+	}
+
+	var models []command.WriteModel
+	for _, model := range requests {
+		conv, err := model.ConvertModel(bulkOpts.BypassDocumentValidation)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, conv)
+	}
+
+	oldns := coll.namespace()
+	cmd := command.BulkWrite{
+		NS:           command.Namespace{DB: oldns.DB, Collection: oldns.Collection},
+		Models:       models,
+		WriteConcern: wc,
+		Ordered:      bulkOpts.Ordered,
+		Session:      sess,
+		Clock:        coll.client.clock,
+		RetryWrite:   coll.client.retryWrites,
+	}
+
+	res, err := dispatch.BulkWrite(
+		ctx, cmd,
+		coll.client.topology,
+		coll.writeSelector,
+		coll.client.id,
+		coll.client.topology.SessionPool,
+		coll.client.retryWrites,
+	)
+
+	return &BulkWriteResult{
+		Acknowledged:  res.Acknowledged,
+		InsertedCount: res.InsertedCount,
+		InsertedIds:   res.InsertedIds,
+		MatchedCount:  res.MatchedCount,
+		ModifiedCount: res.ModifiedCount,
+		DeletedCount:  res.DeletedCount,
+		UpsertedCount: res.UpsertedCount,
+		UpsertedIds:   res.UpsertedIds,
+	}, err
 }
 
 // InsertOne inserts a single document into the collection. A user can supply

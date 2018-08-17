@@ -30,49 +30,68 @@ type Delete struct {
 	Clock        *session.ClusterClock
 	Session      *session.Client
 
-	result result.Delete
-	err    error
+	batches []*Write
+	result  result.Delete
+	err     error
 }
 
 // Encode will encode this command into a wire message for the given server description.
-func (d *Delete) Encode(desc description.SelectedServer) (wiremessage.WireMessage, error) {
-	cmd, err := d.encode(desc)
+func (d *Delete) Encode(desc description.SelectedServer) ([]wiremessage.WireMessage, error) {
+	err := d.encode(desc)
 	if err != nil {
 		return nil, err
 	}
 
-	return cmd.Encode(desc)
+	return batchesToWireMessage(d.batches, desc)
 }
 
-func (d *Delete) encode(desc description.SelectedServer) (*Write, error) {
-	if err := d.NS.Validate(); err != nil {
-		return nil, err
+func (d *Delete) encode(desc description.SelectedServer) error {
+	batches, err := split(int(desc.MaxBatchCount), int(desc.MaxDocumentSize), d.Deletes)
+	if err != nil {
+		return err
 	}
 
-	command := bson.NewDocument(bson.EC.String("delete", d.NS.Collection))
+	for _, docs := range batches {
+		cmd, err := d.encodeBatch(docs, desc)
+		if err != nil {
+			return err
+		}
 
-	arr := bson.NewArray()
-	for _, doc := range d.Deletes {
-		arr.Append(bson.VC.Document(doc))
+		d.batches = append(d.batches, cmd)
 	}
-	command.Append(bson.EC.Array("deletes", arr))
 
+	return nil
+}
+
+func (d *Delete) encodeBatch(docs []*bson.Document, desc description.SelectedServer) (*Write, error) {
+
+	copyDocs := make([]*bson.Document, 0, len(docs)) // copy of all the documents
+	for _, doc := range docs {
+		newDoc := doc.Copy()
+		copyDocs = append(copyDocs, newDoc)
+	}
+
+	var options []option.Optioner
 	for _, opt := range d.Opts {
 		switch opt.(type) {
 		case nil:
+			continue
 		case option.OptCollation:
-			for _, doc := range d.Deletes {
+			// options that are encoded on each individual document
+			for _, doc := range copyDocs {
 				err := opt.Option(doc)
 				if err != nil {
 					return nil, err
 				}
 			}
 		default:
-			err := opt.Option(command)
-			if err != nil {
-				return nil, err
-			}
+			options = append(options, opt)
 		}
+	}
+
+	command, err := encodeBatch(copyDocs, options, d.NS.Collection, deleteCommand)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Write{
@@ -114,15 +133,31 @@ func (d *Delete) Err() error { return d.err }
 
 // RoundTrip handles the execution of this command using the provided wiremessage.ReadWriter.
 func (d *Delete) RoundTrip(ctx context.Context, desc description.SelectedServer, rw wiremessage.ReadWriter) (result.Delete, error) {
-	cmd, err := d.encode(desc)
+	if d.batches == nil {
+		err := d.encode(desc)
+		if err != nil {
+			return result.Delete{}, err
+		}
+	}
+
+	r, batches, err := roundTripBatches(
+		ctx, desc, rw,
+		d.batches,
+		false, // TODO get this from bulk write opt somehow
+		d.Session,
+		deleteCommand,
+	)
+
+	// if there are leftover batches, save them for retry
+	if batches != nil {
+		d.batches = batches
+	}
+
 	if err != nil {
 		return result.Delete{}, err
 	}
 
-	rdr, err := cmd.RoundTrip(ctx, desc, rw)
-	if err != nil {
-		return result.Delete{}, err
-	}
+	res := r.(result.Delete)
 
-	return d.decode(desc, rdr).Result()
+	return res, nil
 }

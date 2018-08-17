@@ -73,6 +73,29 @@ type UpdateResult struct {
 	UpsertedID interface{}
 }
 
+// BulkWriteResult is a result of a bulk write.
+type BulkWriteResult struct {
+	// Acknowledged indicates whether this write result was acknowledged. If not, then all
+	// other members of this result will be undefined.
+	// TODO Not required
+	Acknowledged bool
+	// InsertedCount is the number of documents inserted.
+	InsertedCount int64
+	// InsertedIds is a map of the index of the operation to the id of the inserted document.
+	// TODO Not required
+	InsertedIds map[int64]interface{}
+	// MatchedCount is the number of documents matched for update.
+	MatchedCount int64
+	// ModifiedCount is the number of documents modified.
+	ModifiedCount int64
+	// DeletedCount is the number of documents deleted.
+	DeletedCount int64
+	// UpsertedCount is the number of documents upserted.
+	UpsertedCount int64
+	// UpsertedIds is a map of the index of the operation to the id of the upserted document.
+	UpsertedIds map[int64]interface{}
+}
+
 // UnmarshalBSON implements the bson.Unmarshaler interface.
 func (result *UpdateResult) UnmarshalBSON(b []byte) error {
 	itr, err := bson.Reader(b).Iterator()

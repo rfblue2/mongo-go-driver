@@ -21,7 +21,7 @@ func TestInsertCommandSplitting(t *testing.T) {
 			i.Docs = append(i.Docs, bson.NewDocument(bson.EC.Int32("a", int32(n))))
 		}
 
-		batches, err := i.split(10, kilobyte) // 1kb
+		batches, err := split(10, kilobyte, i.Docs) // 1kb
 		assert.NoError(t, err)
 		assert.Len(t, batches, 10)
 		for _, b := range batches {
@@ -41,7 +41,7 @@ func TestInsertCommandSplitting(t *testing.T) {
 			i.Docs = append(i.Docs, bson.NewDocument(bson.EC.Int32("a", int32(n))))
 		}
 
-		batches, err := i.split(100, 32) // 32 bytes?
+		batches, err := split(100, 32, i.Docs) // 32 bytes?
 		assert.NoError(t, err)
 		assert.Len(t, batches, 50)
 		for _, b := range batches {
@@ -62,7 +62,7 @@ func TestInsertCommandSplitting(t *testing.T) {
 		}
 
 		for _, ct := range []int{-1, 0, -1000} {
-			batches, err := i.split(ct, 100*megabyte)
+			batches, err := split(ct, 100*megabyte, i.Docs)
 			assert.NoError(t, err)
 			assert.Len(t, batches, 100)
 			for _, b := range batches {
@@ -81,7 +81,7 @@ func TestInsertCommandSplitting(t *testing.T) {
 	t.Run("document_larger_than_max_size", func(t *testing.T) {
 		i := &Insert{}
 		i.Docs = append(i.Docs, bson.NewDocument(bson.EC.String("a", "bcdefghijklmnopqrstuvwxyz")))
-		_, err := i.split(100, 5)
+		_, err := split(100, 5, i.Docs)
 		if err != ErrDocumentTooLarge {
 			t.Errorf("Expected a too large error. got %v; want %v", err, ErrDocumentTooLarge)
 		}

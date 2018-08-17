@@ -156,3 +156,20 @@ type CreateIndexes struct {
 type TransactionResult struct {
 	WriteConcernError *WriteConcernError `bson:"writeConcernError"`
 }
+
+// BulkWrite is a result of a bulk write.
+type BulkWrite struct {
+	// TODO Not required
+	Acknowledged  bool
+	InsertedCount int64
+	// TODO Not required
+	InsertedIds   map[int64]interface{}
+	MatchedCount  int64
+	ModifiedCount int64
+	DeletedCount  int64
+	UpsertedCount int64
+	UpsertedIds   map[int64]interface{}
+
+	WriteError        []WriteError
+	WriteConcernError *WriteConcernError
+}
